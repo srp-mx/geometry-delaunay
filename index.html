@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Triangulaciones de Delauney</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background-color: #f0f0f0;
+        text-align: center;
+        color: #333;
+      }
+      .container {
+        max-width: 900px;
+        margin: auto;
+        padding: 20px;
+      }
+      iframe {
+        border: none;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      #three-container {
+        margin-top: 40px;
+        width: 800px;
+        height: 600px;
+        background-color: #000;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      #gallery-controls {
+        margin: 20px auto;
+        width: 800px;
+        text-align: center;
+      }
+      #gallery-controls button {
+        margin: 0 5px;
+        padding: 10px 15px;
+        font-size: 16px;
+      }
+      #current-model {
+        font-weight: bold;
+        padding: 0 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Triangulaciones de Delauney</h1>
+
+      <!-- Canva Presentation Embed -->
+      <div style="position: relative; width: 100%; height: 0; padding-top: 56.25%;
+           box-shadow: 0 2px 8px rgba(63,69,81,0.16); margin-top: 1.6em; margin-bottom: 0.9em;
+           overflow: hidden; border-radius: 8px;">
+        <iframe loading="lazy"
+          style="position: absolute; width: 100%; height: 100%; top: 0; left: 0; border: none;"
+          src="https://www.canva.com/design/DAGlqBeeW80/MefMr8QGCUgrRoUlCDSpuw/view?embed"
+          allowfullscreen="allowfullscreen" allow="fullscreen">
+        </iframe>
+      </div>
+      <a href="https://www.canva.com/design/DAGlqBeeW80/MefMr8QGCUgrRoUlCDSpuw/view?utm_content=DAGlqBeeW80&amp;utm_campaign=designshare&amp;utm_medium=embeds&amp;utm_source=link"
+         target="_blank" rel="noopener">
+        Triangulaciones de Delauney
+      </a>
+
+      <!-- 3D Visualization Container -->
+      <div id="three-container"></div>
+      
+      <!-- Gallery Controls -->
+      <div id="gallery-controls">
+        <button id="prev-model">&lt;</button>
+        <span id="current-model">Actual: Ninguno</span>
+        <button id="next-model">&gt;</button>
+        <button id="toggle-wireframe">Aristas</button>
+        <button id="toggle-points">Vértices</button>
+      </div>
+      
+    </div>
+
+    <!-- Three.js and required extensions -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    
+    <script>
+        // Set up the basic scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, 800 / 600, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(800, 600);
+        document.getElementById('three-container').appendChild(renderer.domElement);
+
+        // Add ambient and directional lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 10, 7.5);
+        scene.add(directionalLight);
+
+        // Custom Gooch Shader Material for full model view
+        const goochMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+            lightDirection: { value: new THREE.Vector3(5, 10, 7.5).normalize() },
+            coolColor: { value: new THREE.Color(0x00aaff) },
+            warmColor: { value: new THREE.Color(0xffaa00) }
+          },
+          vertexShader: `
+            varying vec3 vNormal;
+            void main() {
+              vNormal = normalize( normalMatrix * normal );
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            varying vec3 vNormal;
+            uniform vec3 lightDirection;
+            uniform vec3 coolColor;
+            uniform vec3 warmColor;
+            void main() {
+              vec3 N = normalize(vNormal);
+              vec3 L = normalize(lightDirection);
+              float k = (dot(N, L) + 1.0) * 0.5;
+              vec3 color = mix(coolColor, warmColor, k);
+              gl_FragColor = vec4(color, 1.0);
+            }
+          `
+        });
+
+        // --- New: White fading wireframe material ---
+        // This material is for the wireframe view only.
+        // It uses the built-in wireframe mode and computes a fade
+        // based on the depth (distance from the camera in view space).
+        // Near parts of the model are fully white (opaque) while distant parts fade a little.
+        const wireframeShaderMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+            near: { value: camera.near },
+            far: { value: camera.far }
+          },
+          vertexShader: `
+            varying float vDepth;
+            void main() {
+              // Compute view-space position so we can derive a depth for fading.
+              vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+              vDepth = -mvPosition.z;
+              gl_Position = projectionMatrix * mvPosition;
+            }
+          `,
+          fragmentShader: `
+            varying float vDepth;
+            uniform float near;
+            uniform float far;
+            void main() {
+              // Compute fade factor based on view space depth.
+              // smoothstep returns 0.0 when vDepth is near and 1.0 when approaching far.
+              float fade = smoothstep(near, far, vDepth);
+              // Here, the alpha decreases (up to a 50% fade) as distance increases.
+              gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0 - 0.5 * fade);
+            }
+          `,
+          transparent: true,
+          wireframe: true
+        });
+
+        // Position the camera and initialize OrbitControls for interactive rotation
+        camera.position.z = 5;
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Gallery Variables and state toggle flags
+        const modelsList = [
+          { name: "Model 1", path: 'models/model1.glb' },
+          { name: "Model 2", path: 'models/model2.glb' },
+          { name: "Model 3", path: 'models/model3.glb' }
+        ];
+        const galleryModels = [];
+        let currentModelIndex = 0;
+        let wireframeMode = false;
+        let pointsMode = false; // Controls whether vertices (points) view is active
+
+        // Update the label to show which model is currently displayed
+        function updateCurrentModelLabel() {
+          const label = document.getElementById('current-model');
+          label.textContent = "Actual: " + modelsList[currentModelIndex].name;
+        }
+
+        // --- Modified applyWireframe function ---
+        // Instead of simply toggling the "wireframe" property, we swap the material.
+        // When turning on, we store the original material so we can revert later.
+        function applyWireframe(model, mode) {
+          model.traverse(child => {
+            if (child.isMesh) {
+              if (mode) {
+                // Store the original material before swapping
+                if (!child.userData.originalMaterial) {
+                  child.userData.originalMaterial = child.material;
+                }
+                child.material = wireframeShaderMaterial;
+              } else {
+                // Revert to the original gooch material
+                if (child.userData.originalMaterial) {
+                  child.material = child.userData.originalMaterial;
+                }
+              }
+            }
+          });
+        }
+
+        // Convert each mesh in the model to render as a cloud of points.
+        // This creates a THREE.Points object from the mesh’s geometry (if not already created)
+        // and hides the original mesh.
+        function applyPointsView(model) {
+          model.traverse(child => {
+            if (child.isMesh) {
+              child.visible = false;
+              if (!child.userData.points) {
+                const pointsMaterial = new THREE.PointsMaterial({
+                  size: 0.05,
+                  color: child.material.color ? child.material.color : new THREE.Color(0xffffff)
+                });
+                const points = new THREE.Points(child.geometry, pointsMaterial);
+                points.name = child.name + "_points";
+                child.userData.points = points;
+                if (child.parent) {
+                  child.parent.add(points);
+                }
+              } else {
+                child.userData.points.visible = true;
+              }
+            }
+          });
+        }
+
+        // Revert the model back to its original (mesh) view by hiding the points objects
+        // and making the original meshes visible again.
+        function removePointsView(model) {
+          model.traverse(child => {
+            if (child.isMesh) {
+              child.visible = true;
+              if (child.userData.points) {
+                child.userData.points.visible = false;
+              }
+            }
+          });
+        }
+
+        // Show one model at a time and update its appearance based on the toggle states
+        function showModel(index) {
+          galleryModels.forEach(model => {
+            if (model) {
+              removePointsView(model); // Ensure points view is off for non-displayed models.
+              model.visible = false;
+            }
+          });
+          if (galleryModels[index]) {
+            galleryModels[index].visible = true;
+            if (pointsMode) {
+              applyPointsView(galleryModels[index]);
+            } else {
+              removePointsView(galleryModels[index]);
+              applyWireframe(galleryModels[index], wireframeMode);
+            }
+          }
+          updateCurrentModelLabel();
+        }
+
+        // Load all models from the gallery list.
+        const loader = new THREE.GLTFLoader();
+        modelsList.forEach((modelConfig, i) => {
+          loader.load(
+            modelConfig.path,
+            function(gltf) {
+              gltf.scene.traverse(child => {
+                if (child.isMesh) {
+                  // Assign the gooch material initially
+                  child.material = goochMaterial;
+                }
+              });
+              gltf.scene.position.set(0, -1, 0);
+              gltf.scene.visible = false;
+              galleryModels[i] = gltf.scene;
+              scene.add(gltf.scene);
+              if (i === currentModelIndex) {
+                gltf.scene.visible = true;
+                updateCurrentModelLabel();
+              }
+            },
+            undefined,
+            function(error) {
+              console.error("Error loading " + modelConfig.path + ":", error);
+            }
+          );
+        });
+
+        // Button Event Listeners
+
+        // Cycle to previous model.
+        document.getElementById("prev-model").addEventListener("click", () => {
+          if (galleryModels.length === 0) return;
+          currentModelIndex = (currentModelIndex - 1 + modelsList.length) % modelsList.length;
+          showModel(currentModelIndex);
+        });
+
+        // Cycle to next model.
+        document.getElementById("next-model").addEventListener("click", () => {
+          if (galleryModels.length === 0) return;
+          currentModelIndex = (currentModelIndex + 1) % modelsList.length;
+          showModel(currentModelIndex);
+        });
+
+        // Toggle wireframe mode (note: in points view this toggle has no effect)
+        document.getElementById("toggle-wireframe").addEventListener("click", () => {
+          wireframeMode = !wireframeMode;
+          if (!pointsMode && galleryModels[currentModelIndex]) {
+            applyWireframe(galleryModels[currentModelIndex], wireframeMode);
+          }
+        });
+
+        // Toggle points view mode to render vertices like gl.POINTS.
+        document.getElementById("toggle-points").addEventListener("click", () => {
+          pointsMode = !pointsMode;
+          if (galleryModels[currentModelIndex]) {
+            if (pointsMode) {
+              applyPointsView(galleryModels[currentModelIndex]);
+            } else {
+              removePointsView(galleryModels[currentModelIndex]);
+              applyWireframe(galleryModels[currentModelIndex], wireframeMode);
+            }
+          }
+        });
+
+        // Animation Loop
+        function animate() {
+          requestAnimationFrame(animate);
+          controls.update();
+          renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+  </body>
+</html>
