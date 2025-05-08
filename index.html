@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Triangulaciones de Delauney</title>
+    <title>Triangulaciones de Delaunay</title>
     <style>
       body {
         margin: 0;
@@ -46,7 +46,7 @@
   </head>
   <body>
     <div class="container">
-      <h1>Triangulaciones de Delauney</h1>
+      <h1>Triangulaciones de Delaunay</h1>
 
       <!-- Canva Presentation Embed -->
       <div style="position: relative; width: 100%; height: 0; padding-top: 56.25%;
@@ -60,7 +60,7 @@
       </div>
       <a href="https://www.canva.com/design/DAGlqBeeW80/MefMr8QGCUgrRoUlCDSpuw/view?utm_content=DAGlqBeeW80&amp;utm_campaign=designshare&amp;utm_medium=embeds&amp;utm_source=link"
          target="_blank" rel="noopener">
-        Triangulaciones de Delauney
+        Triangulaciones de Delaunay
       </a>
 
       <!-- 3D Visualization Container -->
@@ -86,6 +86,9 @@
         // Set up the basic scene, camera, and renderer
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, 800 / 600, 0.1, 1000);
+        // Camera positioned further back.
+        camera.position.y = 10;
+        camera.position.z = 20;
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(800, 600);
         document.getElementById('three-container').appendChild(renderer.domElement);
@@ -97,17 +100,18 @@
         directionalLight.position.set(5, 10, 7.5);
         scene.add(directionalLight);
 
-        // Custom Gooch Shader Material for full model view
-        const goochMaterial = new THREE.ShaderMaterial({
+        const myMaterial = new THREE.ShaderMaterial({
           uniforms: {
             lightDirection: { value: new THREE.Vector3(5, 10, 7.5).normalize() },
-            coolColor: { value: new THREE.Color(0x00aaff) },
-            warmColor: { value: new THREE.Color(0xffaa00) }
+            // Dark green for the less-lit parts of the hill.
+            coolColor: { value: new THREE.Color(0x005500) },
+            // Lighter green for sunlit parts.
+            warmColor: { value: new THREE.Color(0x66cc66) }
           },
           vertexShader: `
             varying vec3 vNormal;
             void main() {
-              vNormal = normalize( normalMatrix * normal );
+              vNormal = normalize(normalMatrix * normal);
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
           `,
@@ -120,17 +124,17 @@
               vec3 N = normalize(vNormal);
               vec3 L = normalize(lightDirection);
               float k = (dot(N, L) + 1.0) * 0.5;
+              // Apply a slight power to enhance contrast,
+              // making geometric features more distinct.
+              k = pow(k, 1.2);
               vec3 color = mix(coolColor, warmColor, k);
               gl_FragColor = vec4(color, 1.0);
             }
           `
         });
 
-        // --- New: White fading wireframe material ---
-        // This material is for the wireframe view only.
-        // It uses the built-in wireframe mode and computes a fade
-        // based on the depth (distance from the camera in view space).
-        // Near parts of the model are fully white (opaque) while distant parts fade a little.
+        // White fading wireframe material (for wireframe view only)
+        // Backface culling is enabled here (using THREE.FrontSide, the default)
         const wireframeShaderMaterial = new THREE.ShaderMaterial({
           uniforms: {
             near: { value: camera.near },
@@ -151,9 +155,8 @@
             uniform float far;
             void main() {
               // Compute fade factor based on view space depth.
-              // smoothstep returns 0.0 when vDepth is near and 1.0 when approaching far.
               float fade = smoothstep(near, far, vDepth);
-              // Here, the alpha decreases (up to a 50% fade) as distance increases.
+              // Fade alpha according to distance.
               gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0 - 0.5 * fade);
             }
           `,
@@ -162,16 +165,17 @@
         });
 
         // Position the camera and initialize OrbitControls for interactive rotation
-        camera.position.z = 5;
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
         // Gallery Variables and state toggle flags
         const modelsList = [
-          { name: "Model 1", path: 'models/model1.glb' },
-          { name: "Model 2", path: 'models/model2.glb' },
-          { name: "Model 3", path: 'models/model3.glb' }
+          { name: "Terreno", path: 'models/high_resolution_terrain.glb' },
+          { name: "Muestreo", path: 'models/terrain_samples.glb' },
+          { name: "Triangulación angular", path: 'models/sample_angular_trig.glb' },
+          { name: "Triangulación greedy", path: 'models/sample_greedyMonotone_trig.glb' },
+          { name: "Triangulación de Delaunay", path: 'models/sample_deluney_trig.glb' }
         ];
         const galleryModels = [];
         let currentModelIndex = 0;
@@ -185,8 +189,6 @@
         }
 
         // --- Modified applyWireframe function ---
-        // Instead of simply toggling the "wireframe" property, we swap the material.
-        // When turning on, we store the original material so we can revert later.
         function applyWireframe(model, mode) {
           model.traverse(child => {
             if (child.isMesh) {
@@ -197,7 +199,7 @@
                 }
                 child.material = wireframeShaderMaterial;
               } else {
-                // Revert to the original gooch material
+                // Revert to the original material
                 if (child.userData.originalMaterial) {
                   child.material = child.userData.originalMaterial;
                 }
@@ -207,19 +209,23 @@
         }
 
         // Convert each mesh in the model to render as a cloud of points.
-        // This creates a THREE.Points object from the mesh’s geometry (if not already created)
-        // and hides the original mesh.
         function applyPointsView(model) {
           model.traverse(child => {
             if (child.isMesh) {
               child.visible = false;
               if (!child.userData.points) {
                 const pointsMaterial = new THREE.PointsMaterial({
-                  size: 0.05,
+                  size: 0.1, // Set for better visibility relative to model scale
+                  sizeAttenuation: true,
                   color: child.material.color ? child.material.color : new THREE.Color(0xffffff)
+                  // Note: No "side" property specified means backface culling is active.
                 });
                 const points = new THREE.Points(child.geometry, pointsMaterial);
                 points.name = child.name + "_points";
+                // Match the mesh's transform for consistency.
+                points.position.copy(child.position);
+                points.rotation.copy(child.rotation);
+                points.scale.copy(child.scale);
                 child.userData.points = points;
                 if (child.parent) {
                   child.parent.add(points);
@@ -232,7 +238,6 @@
         }
 
         // Revert the model back to its original (mesh) view by hiding the points objects
-        // and making the original meshes visible again.
         function removePointsView(model) {
           model.traverse(child => {
             if (child.isMesh) {
@@ -272,8 +277,8 @@
             function(gltf) {
               gltf.scene.traverse(child => {
                 if (child.isMesh) {
-                  // Assign the gooch material initially
-                  child.material = goochMaterial;
+                  // Assign the original material to each mesh.
+                  child.material = myMaterial;
                 }
               });
               gltf.scene.position.set(0, -1, 0);
